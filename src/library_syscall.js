@@ -5644,6 +5644,283 @@ var SyscallsLibrary = {
     
     return ret;
     },
+    /* Modified by Benoit Baudaux 10/1/2025 */
+    __syscall_pwritev__sig: 'iipp',
+    __syscall_pwritev: function(fd, iov, iovcnt, off_lo, off_hi) {
+
+	let ret = Asyncify.handleSleep(function (wakeUp) {
+
+	    let do_writev = () => {
+	
+		let len = 0;
+
+		if (iov && (iovcnt > 0)) {
+		    
+		    let iov2 = iov;
+
+		    for (var i = 0; i < iovcnt; i++) {
+			len += {{{ makeGetValue('iov2', C_STRUCTS.iovec.iov_len, '*') }}};
+			iov2 += {{{ C_STRUCTS.iovec.__size__ }}};
+		    }
+		}
+
+		let buf_size = 20+len;
+
+		let buf2 = new Uint8Array(buf_size);
+
+		buf2[0] = 13; // WRITE
+		
+		let pid = Module.getpid();
+
+		//console.log("writev: tid="+pid);
+
+		// pid
+		buf2[4] = pid & 0xff;
+		buf2[5] = (pid >> 8) & 0xff;
+		buf2[6] = (pid >> 16) & 0xff;
+		buf2[7] = (pid >> 24) & 0xff;
+
+		let remote_fd = Module['fd_table'][fd].remote_fd;
+
+		// remote_fd
+		buf2[12] = remote_fd & 0xff;
+		buf2[13] = (remote_fd >> 8) & 0xff;
+		buf2[14] = (remote_fd >> 16) & 0xff;
+		buf2[15] = (remote_fd >> 24) & 0xff;
+
+		// len
+		buf2[16] = len & 0xff;
+		buf2[17] = (len >> 8) & 0xff;
+		buf2[18] = (len >> 16) & 0xff;
+		buf2[19] = (len >> 24) & 0xff;
+
+		buf_size = 20;
+
+		if (iov && (iovcnt > 0)) {
+		    
+		    let iov2 = iov;
+
+		    for (var i = 0; i < iovcnt; i++) {
+			
+			let ptr = {{{ makeGetValue('iov2', C_STRUCTS.iovec.iov_base, '*') }}};
+			if (ptr) {
+			    let l = {{{ makeGetValue('iov2', C_STRUCTS.iovec.iov_len, '*') }}};
+			    
+			    if (l > 0)
+				buf2.set(HEAPU8.slice(ptr, ptr+l), buf_size);
+			    
+			    buf_size += l;
+			}
+
+			iov2 += {{{ C_STRUCTS.iovec.__size__ }}};
+		    }
+		}
+
+		const hid = Module['rcv_bc_channel'].set_handler( (messageEvent) => {
+
+		    let msg2 = messageEvent.data;
+
+		    if (msg2.buf[0] == (13|0x80)) {
+
+			let _errno = msg2.buf[8] | (msg2.buf[9] << 8) | (msg2.buf[10] << 16) |  (msg2.buf[11] << 24);
+
+			if (!_errno) {
+
+			    let bytes_written = msg2.buf[16] | (msg2.buf[17] << 8) | (msg2.buf[18] << 16) |  (msg2.buf[19] << 24);
+			    
+			    wakeUp(bytes_written);
+			}
+			else {
+
+			    wakeUp(-_errno);
+			}
+
+			return hid;
+		    }
+		    else {
+
+			return -1;
+		    }
+		});
+
+		let msg = {
+
+		    from: Module['rcv_bc_channel'].name,
+		    buf: buf2,
+		    len: buf_size
+		};
+
+		let driver_bc = Module.get_broadcast_channel(Module['fd_table'][fd].peer);
+		
+		driver_bc.postMessage(msg);
+	    };
+
+	    let do_lseek = () => {
+
+		let buf_size = 256;
+
+		let buf2 = new Uint8Array(buf_size);
+
+		buf2[0] = 39; // SEEK
+
+		let pid = Module.getpid();
+
+		// pid
+		buf2[4] = pid & 0xff;
+		buf2[5] = (pid >> 8) & 0xff;
+		buf2[6] = (pid >> 16) & 0xff;
+		buf2[7] = (pid >> 24) & 0xff;
+
+		let remote_fd = Module['fd_table'][fd].remote_fd;
+
+		// remote_fd
+		buf2[12] = remote_fd & 0xff;
+		buf2[13] = (remote_fd >> 8) & 0xff;
+		buf2[14] = (remote_fd >> 16) & 0xff;
+		buf2[15] = (remote_fd >> 24) & 0xff;
+
+		// offset
+		buf2[16] = off_lo & 0xff;
+		buf2[17] = (off_lo >> 8) & 0xff;
+		buf2[18] = (off_lo >> 16) & 0xff;
+		buf2[19] = (off_lo >> 24) & 0xff;
+
+		const whence = 0;
+
+		// whence
+		buf2[20] = whence & 0xff;
+		buf2[21] = (whence >> 8) & 0xff;
+		buf2[22] = (whence >> 16) & 0xff;
+		buf2[23] = (whence >> 24) & 0xff;
+
+		const hid = Module['rcv_bc_channel'].set_handler( (messageEvent) => {
+
+		    let msg2 = messageEvent.data;
+
+		    if (msg2.buf[0] == (39|0x80)) {
+
+			let _errno = msg2.buf[8] | (msg2.buf[9] << 8) | (msg2.buf[10] << 16) |  (msg2.buf[11] << 24);
+
+			//console.log("bytes_read: "+bytes_read);
+
+			if (!_errno) {
+
+			    do_writev();
+			}
+			else {
+			
+			    wakeUp(-_errno);
+			}
+
+			return hid;
+		    }
+		    else {
+
+			return -1;
+		    }
+		});
+
+		let msg = {
+		    
+		    from: Module['rcv_bc_channel'].name,
+		    buf: buf2,
+		    len: buf_size
+		};
+
+		let driver_bc = Module.get_broadcast_channel(Module['fd_table'][fd].peer);
+		
+		driver_bc.postMessage(msg);
+	    };
+
+	    if ( (fd in Module['fd_table']) && (Module['fd_table'][fd]) ) {
+
+		do_lseek();
+	    }
+	    else {
+		let buf_size = 20;
+
+		let buf2 = new Uint8Array(buf_size);
+
+		buf2[0] = 26; // IS_OPEN
+
+		let pid = Module.getpid();
+
+		// pid
+		buf2[4] = pid & 0xff;
+		buf2[5] = (pid >> 8) & 0xff;
+		buf2[6] = (pid >> 16) & 0xff;
+		buf2[7] = (pid >> 24) & 0xff;
+
+		// fd
+		buf2[12] = fd & 0xff;
+		buf2[13] = (fd >> 8) & 0xff;
+		buf2[14] = (fd >> 16) & 0xff;
+		buf2[15] = (fd >> 24) & 0xff;
+
+		const hid = Module['rcv_bc_channel'].set_handler( (messageEvent) => {
+
+		    let msg2 = messageEvent.data;
+
+		    if (msg2.buf[0] == (26|0x80)) {
+
+			let _errno = msg2.buf[8] | (msg2.buf[9] << 8) | (msg2.buf[10] << 16) |  (msg2.buf[11] << 24);
+
+			if (!_errno) {
+
+			    let remote_fd = msg2.buf[16] | (msg2.buf[17] << 8) | (msg2.buf[18] << 16) |  (msg2.buf[19] << 24);
+			    let type = msg2.buf[20];
+			    let major = msg2.buf[22] | (msg2.buf[23] << 8);
+			    let peer = UTF8ArrayToString(msg2.buf, 24, 108);			    
+			    var desc = {
+
+				fd: fd,
+				remote_fd: remote_fd,
+				peer: peer,
+				type: type,
+				major: major,
+				
+				error: null, // Used in getsockopt for SOL_SOCKET/SO_ERROR test
+				peers: {},
+				pending: [],
+				recv_queue: [],
+				name: null,
+				bc: null,
+			    };
+
+			    Module['fd_table'][fd] = desc;
+
+			    do_lseek();
+
+			    return hid;
+			}
+			else {
+
+			    wakeUp(-_errno);
+			}
+
+			return hid;
+		    }
+		    else {
+
+			return -1;
+		    }
+		});
+
+		let msg = {
+		    
+		    from: Module['rcv_bc_channel'].name,
+		    buf: buf2,
+		    len: buf_size
+		};
+
+		let bc = Module.get_broadcast_channel("/var/resmgr.peer");
+
+		bc.postMessage(msg);
+	    }
+	});
+    
+    return ret;
+    },
     /* Modified by Benoit Baudaux 9/1/2023 */
     __syscall_getpid__sig: 'i',
     __syscall_getpid: function() {
@@ -6358,6 +6635,312 @@ var SyscallsLibrary = {
 			    Module['fd_table'][fd] = desc;
 
 			    do_readv();
+
+			    return hid;
+			}
+			else {
+
+			    wakeUp(-_errno);
+			}
+
+			return hid;
+		    }
+		    else {
+
+			return -1;
+		    }
+		});
+
+		let msg = {
+		    
+		    from: Module['rcv_bc_channel'].name,
+		    buf: buf2,
+		    len: buf_size
+		};
+
+		let bc = Module.get_broadcast_channel("/var/resmgr.peer");
+
+		bc.postMessage(msg);
+	    }
+	});
+    
+    return ret;
+    },
+    /* Modified by Benoit Baudaux 10/1/2025 */
+    __syscall_preadv__sig: 'iipppii',
+    __syscall_preadv: function(fd, iov, iovcnt, off_lo, off_hi) {
+
+	let ret = Asyncify.handleSleep(function (wakeUp) {
+
+	    let count = 0;
+
+	    for (let i = 0; i < iovcnt; i++) {
+
+		count += Module.HEAPU8[iov+8*i+4] | (Module.HEAPU8[iov+8*i+5] << 8) | (Module.HEAPU8[iov+8*i+6] << 16) |  (Module.HEAPU8[iov+8*i+7] << 24)
+	    }
+
+	    //console.log("__syscall_preadv: iovcnt="+iovcnt+", count="+count+", off_lo="+off_lo);
+
+	    let do_readv = () => {
+
+		//console.log("__syscall_preadv: do_readv");
+
+		let len = count;
+		
+		let buf_size = 20;
+
+		let buf2 = new Uint8Array(buf_size);
+
+		buf2[0] = 12; // READ
+
+		let pid = Module.getpid();
+
+		// pid
+		buf2[4] = pid & 0xff;
+		buf2[5] = (pid >> 8) & 0xff;
+		buf2[6] = (pid >> 16) & 0xff;
+		buf2[7] = (pid >> 24) & 0xff;
+
+		let remote_fd = Module['fd_table'][fd].remote_fd;
+
+		// remote_fd
+		buf2[12] = remote_fd & 0xff;
+		buf2[13] = (remote_fd >> 8) & 0xff;
+		buf2[14] = (remote_fd >> 16) & 0xff;
+		buf2[15] = (remote_fd >> 24) & 0xff;
+
+		// len
+		buf2[16] = len & 0xff;
+		buf2[17] = (len >> 8) & 0xff;
+		buf2[18] = (len >> 16) & 0xff;
+		buf2[19] = (len >> 24) & 0xff;
+
+		// off_lo
+		buf2[20] = off_lo & 0xff;
+		buf2[21] = (off_lo >> 8) & 0xff;
+		buf2[22] = (off_lo >> 16) & 0xff;
+		buf2[23] = (off_lo >> 24) & 0xff;
+
+		const hid = Module['rcv_bc_channel'].set_handler( (messageEvent) => {
+
+		    let msg2 = messageEvent.data;
+
+		    //console.log("__syscall_readv handler "+msg2.buf[0]);
+
+		    if (msg2.buf[0] == (12|0x80)) {
+
+			let _errno = msg2.buf[8] | (msg2.buf[9] << 8) | (msg2.buf[10] << 16) |  (msg2.buf[11] << 24);
+
+			if (!_errno) {
+
+			    let bytes_read = msg2.buf[16] | (msg2.buf[17] << 8) | (msg2.buf[18] << 16) |  (msg2.buf[19] << 24);
+
+			    //console.log("__syscall_readv: bytes_read="+bytes_read);
+
+			    /*for (let i=0;i<bytes_read; i+= 160) {
+			      
+			      console.log("* "+i+": "+msg2.buf[20+i]+" "+msg2.buf[20+i+1]+" "+msg2.buf[20+i+2]+" "+msg2.buf[20+i+3]);
+			      }*/
+
+			    let offset = 0;
+
+			    for (let i = 0; i < iovcnt; i++) {
+
+				let len =  Module.HEAPU8[iov+8*i+4] | (Module.HEAPU8[iov+8*i+5] << 8) | (Module.HEAPU8[iov+8*i+6] << 16) |  (Module.HEAPU8[iov+8*i+7] << 24);
+
+				//console.log("__syscall_readv: "+i+", len="+len);
+				
+				let len2 = ((offset+len) <= bytes_read)?len:bytes_read-offset;
+
+				//console.log("__syscall_readv: "+i+", len2="+len2);
+
+				if (len2 > 0) {
+				    let ptr =  Module.HEAPU8[iov+8*i] | (Module.HEAPU8[iov+8*i+1] << 8) | (Module.HEAPU8[iov+8*i+2] << 16) |  (Module.HEAPU8[iov+8*i+3] << 24);
+
+				    Module.HEAPU8.set(msg2.buf.slice(20+offset, 20+offset+len2), ptr);
+				}
+				else {
+
+				    break;
+				}
+
+				offset += len2;
+
+				if (offset >= bytes_read)
+				    break;
+			    }
+			    
+			    wakeUp(bytes_read);
+			}
+			else {
+
+			    wakeUp(-_errno);
+			}
+
+			return hid;
+		    }
+		    else if (msg2.buf[0] == 62) { // END_OF_SIGNAL Signal received and handled
+
+			//TODO: check flags
+			
+			wakeUp(-4); //EINTR
+
+			return hid;
+		    }
+		    else {
+
+			return -1;
+		    }
+		});
+
+		let msg = {
+		    
+		    from: Module['rcv_bc_channel'].name,
+		    buf: buf2,
+		    len: buf_size
+		};
+
+		let driver_bc = Module.get_broadcast_channel(Module['fd_table'][fd].peer);
+		
+		driver_bc.postMessage(msg);
+	    };
+
+	    
+	    let do_lseek = () => {
+
+		let buf_size = 256;
+
+		let buf2 = new Uint8Array(buf_size);
+
+		buf2[0] = 39; // SEEK
+
+		let pid = Module.getpid();
+
+		// pid
+		buf2[4] = pid & 0xff;
+		buf2[5] = (pid >> 8) & 0xff;
+		buf2[6] = (pid >> 16) & 0xff;
+		buf2[7] = (pid >> 24) & 0xff;
+
+		let remote_fd = Module['fd_table'][fd].remote_fd;
+
+		// remote_fd
+		buf2[12] = remote_fd & 0xff;
+		buf2[13] = (remote_fd >> 8) & 0xff;
+		buf2[14] = (remote_fd >> 16) & 0xff;
+		buf2[15] = (remote_fd >> 24) & 0xff;
+
+		// offset
+		buf2[16] = off_lo & 0xff;
+		buf2[17] = (off_lo >> 8) & 0xff;
+		buf2[18] = (off_lo >> 16) & 0xff;
+		buf2[19] = (off_lo >> 24) & 0xff;
+
+		const whence = 0;
+
+		// whence
+		buf2[20] = whence & 0xff;
+		buf2[21] = (whence >> 8) & 0xff;
+		buf2[22] = (whence >> 16) & 0xff;
+		buf2[23] = (whence >> 24) & 0xff;
+
+		const hid = Module['rcv_bc_channel'].set_handler( (messageEvent) => {
+
+		    let msg2 = messageEvent.data;
+
+		    if (msg2.buf[0] == (39|0x80)) {
+
+			let _errno = msg2.buf[8] | (msg2.buf[9] << 8) | (msg2.buf[10] << 16) |  (msg2.buf[11] << 24);
+
+			//console.log("bytes_read: "+bytes_read);
+
+			if (!_errno) {
+
+			    do_readv();
+			}
+			else {
+			
+			    wakeUp(-_errno);
+			}
+
+			return hid;
+		    }
+		    else {
+
+			return -1;
+		    }
+		});
+
+		let msg = {
+		    
+		    from: Module['rcv_bc_channel'].name,
+		    buf: buf2,
+		    len: buf_size
+		};
+
+		let driver_bc = Module.get_broadcast_channel(Module['fd_table'][fd].peer);
+		
+		driver_bc.postMessage(msg);
+	    };
+
+	    if ( (fd in Module['fd_table']) && (Module['fd_table'][fd]) ) {
+
+		do_lseek();
+	    }
+	    else {
+		let buf_size = 256;
+
+		let buf2 = new Uint8Array(buf_size);
+
+		buf2[0] = 26; // IS_OPEN
+
+		let pid = Module.getpid();
+
+		// pid
+		buf2[4] = pid & 0xff;
+		buf2[5] = (pid >> 8) & 0xff;
+		buf2[6] = (pid >> 16) & 0xff;
+		buf2[7] = (pid >> 24) & 0xff;
+
+		// fd
+		buf2[12] = fd & 0xff;
+		buf2[13] = (fd >> 8) & 0xff;
+		buf2[14] = (fd >> 16) & 0xff;
+		buf2[15] = (fd >> 24) & 0xff;
+
+		const hid = Module['rcv_bc_channel'].set_handler( (messageEvent) => {
+
+		    let msg2 = messageEvent.data;
+
+		    if (msg2.buf[0] == (26|0x80)) {
+
+			let _errno = msg2.buf[8] | (msg2.buf[9] << 8) | (msg2.buf[10] << 16) |  (msg2.buf[11] << 24);
+
+			if (!_errno) {
+
+			    let remote_fd = msg2.buf[16] | (msg2.buf[17] << 8) | (msg2.buf[18] << 16) |  (msg2.buf[19] << 24);
+			    let type = msg2.buf[20];
+			    let major = msg2.buf[22] | (msg2.buf[23] << 8);
+			    let peer = UTF8ArrayToString(msg2.buf, 24, 108);			    
+			    var desc = {
+
+				fd: fd,
+				remote_fd: remote_fd,
+				peer: peer,
+				type: type,
+				major: major,
+				
+				error: null, // Used in getsockopt for SOL_SOCKET/SO_ERROR test
+				peers: {},
+				pending: [],
+				recv_queue: [],
+				name: null,
+				bc: null,
+			    };
+
+			    Module['fd_table'][fd] = desc;
+
+			    do_lseek();
 
 			    return hid;
 			}
@@ -8099,13 +8682,22 @@ var SyscallsLibrary = {
 	    // /dev/video0
 
 	    let ptr = Module._malloc(Module.video0.buffers[off].length);
-
+	    
 	    //console.log("mmap2: video0 off="+off+", ptr="+ptr);
 
 	    Module.video0.buffers[off].ptr = ptr;
 	    
 	    return ptr;
 	    
+	}
+	else if (fd == -1) {
+
+	    // ptr shall be aligned on page size 4096 bytes
+	    let ptr = Module._malloc(len+4095);
+
+	    ptr = (ptr+0xfff) & 0xfffff000;
+
+	    return ptr;
 	}
 	else {
 

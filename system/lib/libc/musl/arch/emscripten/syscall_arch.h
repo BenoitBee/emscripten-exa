@@ -174,6 +174,10 @@ int __syscall_rt_sigaction(int signum, intptr_t act, intptr_t oldact, int sigset
   int __syscall_epoll_create1(int flags);
   int __syscall_epoll_ctl(int fd, int op, int fd2, intptr_t ev);
   int __syscall_epoll_wait(int fd, intptr_t ev, int cnt, int to);
+
+  /* Modified by Benoit Baudaux 10/1/2025 */
+  int __syscall_preadv(int fd, intptr_t iov, int iovcnt, int off_lo, int off_hi);
+  int __syscall_pwritev(int fd, intptr_t iov, int iovcnt, int off_lo, int off_hi);
   
 #ifdef __cplusplus
 }

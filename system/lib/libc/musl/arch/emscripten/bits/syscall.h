@@ -155,3 +155,7 @@
 #define SYS_epoll_create1       __syscall_epoll_create1
 #define SYS_epoll_ctl           __syscall_epoll_ctl
 #define SYS_epoll_wait          __syscall_epoll_wait
+
+/* Modified by Benoit Baudaux 10/01/2025 */
+#define SYS_preadv              __syscall_preadv
+#define SYS_pwritev             __syscall_pwritev
