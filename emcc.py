@@ -169,6 +169,8 @@ DEFAULT_ASYNCIFY_IMPORTS = [
   '__syscall_newfstatat',
   '__syscall_preadv',
   '__syscall_pwritev',
+  '__syscall_sendmsg',
+  '__syscall_recvmsg',
   # for dyn lib
   'getppid',
   'printf',

@@ -1027,6 +1027,7 @@ var SyscallsLibrary = {
 
 			case {{{ cDefine('TIOCGPGRP') }}}:
 			case {{{ cDefine('TIOCGPTN') }}}:
+			case {{{ cDefine('FIONREAD') }}}:
 
 			    len = 4;
 			    break;
@@ -1473,7 +1474,10 @@ var SyscallsLibrary = {
 
 			    if (domain == 1) { // AF_UNIX
 
-				ops = SOCKFS.unix_dgram_sock_ops;
+				if (type == 1)       //SOCK_STREAM
+				    ops = SOCKFS.stream_ops;
+				else if (type == 2)  // SOCK_DGRAM
+				    ops = SOCKFS.unix_dgram_sock_ops;
 			    }
 
 			    // create our internal socket structure
@@ -1765,11 +1769,13 @@ var SyscallsLibrary = {
 
       let ret = Asyncify.handleSleep(function (wakeUp) {
 
-	  if (Module['fd_table'][fd].family == 1) {
+	  if (Module['fd_table'][fd].family == 1) {  // AF_UNIX
 
 	      //TODO
+
+	      wakeUp(-1);
 	  }
-	  else {
+	  else if ( (Module['fd_table'][fd].family == 2) || (Module['fd_table'][fd].family == 10) ) {
 
 	      let buf_size = 20+40;
 
@@ -1793,6 +1799,9 @@ var SyscallsLibrary = {
 	      buf2[14] = (remote_fd >> 16) & 0xff;
 	      buf2[15] = (remote_fd >> 24) & 0xff;
 
+	      if (addrlen > 40)
+		  addrlen = 40;
+	      
 	      // addrlen
 	      buf2[16] = addrlen & 0xff;
 	      buf2[17] = (addrlen >> 8) & 0xff;
@@ -1829,6 +1838,10 @@ var SyscallsLibrary = {
 	      
 	      driver_bc.postMessage(msg);
 	      
+	  }
+	  else {
+
+	      wakeUp(-1);
 	  }
       });
 
@@ -1963,7 +1976,7 @@ var SyscallsLibrary = {
 	    }
 	    else {
 
-		let buf_size = 24;
+		let buf_size = 28;
 
 		let buf2 = new Uint8Array(buf_size);
 
@@ -2172,10 +2185,14 @@ var SyscallsLibrary = {
     }
     return -{{{ cDefine('ENOPROTOOPT') }}}; // The option is unknown at the level indicated.
   },
-    __syscall_sendmsg__deps: ['$getSocketFromFD', '$readSockaddr'],
-			      //, '$DNS'],
+    __syscall_sendmsg__deps: [
+	//'$getSocketFromFD', '$readSockaddr'],
+	//, '$DNS'
+    ],
   __syscall_sendmsg: function(fd, message, flags) {
-    var sock = getSocketFromFD(fd);
+
+#if 0
+      var sock = getSocketFromFD(fd);
     var iov = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_iov, '*') }}};
     var num = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_iovlen, 'i32') }}};
     // read the address and port to send to
@@ -2203,11 +2220,154 @@ var SyscallsLibrary = {
       }
     }
     // write the buffer
-    return sock.sock_ops.sendmsg(sock, view, 0, total, addr, port);
+      return sock.sock_ops.sendmsg(sock, view, 0, total, addr, port);
+
+#endif
+      
+      let iov = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_iov, '*') }}};
+      let iovcnt = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_iovlen, 'i32') }}};
+
+      let length = 0;
+
+      if (iov && (iovcnt > 0)) {
+	  
+	  let iov2 = iov;
+
+	  for (var i = 0; i < iovcnt; i++) {
+	      length += {{{ makeGetValue('iov2', C_STRUCTS.iovec.iov_len, '*') }}};
+	      iov2 += {{{ C_STRUCTS.iovec.__size__ }}};
+	  }
+      }
+
+      let name = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_name, '*') }}};
+      let namelen = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_namelen, 'i32') }}};
+
+      console.log("syscall_sendmsg: iovcnt="+iovcnt+", length="+length+", namelen="+namelen);
+      
+      if (Module['fd_table'][fd].family == 1) {
+
+	    // TODO
+
+	    /*var sock = getSocketFromFD(fd);
+
+	    let uint8 = Module.HEAPU8.slice(message, message+length);
+	    
+	    return sock.sock_ops.sendto(sock, uint8, length, flags, null, null);*/
+	    
+	}
+	else { // Send message to ip driver
+
+	    let ret = Asyncify.handleSleep(function (wakeUp) {
+
+		let buf_size = 28+40+length;
+
+		let buf2 = new Uint8Array(buf_size);
+
+		buf2[0] = 52; // SENDTO
+
+		let pid = Module.getpid();
+
+		// pid
+		buf2[4] = pid & 0xff;
+		buf2[5] = (pid >> 8) & 0xff;
+		buf2[6] = (pid >> 16) & 0xff;
+		buf2[7] = (pid >> 24) & 0xff;
+
+		let remote_fd = Module['fd_table'][fd].remote_fd;
+
+		// remote_fd
+		buf2[12] = remote_fd & 0xff;
+		buf2[13] = (remote_fd >> 8) & 0xff;
+		buf2[14] = (remote_fd >> 16) & 0xff;
+		buf2[15] = (remote_fd >> 24) & 0xff;
+
+		// flags
+		buf2[16] = flags & 0xff;
+		buf2[17] = (flags >> 8) & 0xff;
+		buf2[18] = (flags >> 16) & 0xff;
+		buf2[19] = (flags >> 24) & 0xff;
+
+		// addr_len
+		buf2[20] = namelen & 0xff;
+		buf2[21] = (namelen >> 8) & 0xff;
+		buf2[22] = (namelen >> 16) & 0xff;
+		buf2[23] = (namelen >> 24) & 0xff;
+
+		// addr
+		if (name && namelen > 0)
+		    buf2.set(Module.HEAPU8.slice(name, name+namelen), 24);
+
+		// length
+		buf2[64] = length & 0xff;
+		buf2[65] = (length >> 8) & 0xff;
+		buf2[66] = (length >> 16) & 0xff;
+		buf2[67] = (length >> 24) & 0xff;
+
+		// message
+		buf_size = 68;
+
+		if (iov && (iovcnt > 0)) {
+		    
+		    let iov2 = iov;
+
+		    for (var i = 0; i < iovcnt; i++) {
+			
+			let ptr = {{{ makeGetValue('iov2', C_STRUCTS.iovec.iov_base, '*') }}};
+			if (ptr) {
+			    let l = {{{ makeGetValue('iov2', C_STRUCTS.iovec.iov_len, '*') }}};
+			    
+			    if (l > 0)
+				buf2.set(HEAPU8.slice(ptr, ptr+l), buf_size);
+			    
+			    buf_size += l;
+			}
+			
+			iov2 += {{{ C_STRUCTS.iovec.__size__ }}};
+		    }
+		}
+
+		const hid = Module['rcv_bc_channel'].set_handler( (messageEvent) => {
+		    let msg2 = messageEvent.data;
+
+		    if (msg2.buf[0] == (52|0x80)) {
+			
+			let _errno = msg2.buf[8] | (msg2.buf[9] << 8) | (msg2.buf[10] << 16) |  (msg2.buf[11] << 24);
+
+			if (!_errno)
+			    wakeUp(length);
+			else
+			    wakeUp(-_errno);
+
+			return hid;
+		    }
+
+		    return -1;
+		});
+
+		let msg = {
+		    
+		    from: Module['rcv_bc_channel'].name,
+		    buf: buf2,
+		    len: buf_size
+		};
+
+		let driver_bc = Module.get_broadcast_channel(Module['fd_table'][fd].peer);
+		
+		driver_bc.postMessage(msg);
+
+	    });
+
+	    return ret;
+	    
+	}
   },
-    __syscall_recvmsg__deps: ['$getSocketFromFD', '$writeSockaddr'],
-    //, '$DNS'],
-  __syscall_recvmsg: function(fd, message, flags) {
+    __syscall_recvmsg__deps: [
+	//'$getSocketFromFD', '$writeSockaddr'],
+	//, '$DNS'
+    ],
+    __syscall_recvmsg: function(fd, message, flags) {
+
+#if 0
     var sock = getSocketFromFD(fd);
     var iov = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_iov, POINTER_TYPE) }}};
     var num = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_iovlen, 'i32') }}};
@@ -2235,6 +2395,7 @@ var SyscallsLibrary = {
 #if ASSERTIONS
       assert(!errno);
 #endif
+	
     }
     // write the buffer out to the scatter-gather arrays
     var bytesRead = 0;
@@ -2261,7 +2422,149 @@ var SyscallsLibrary = {
     // Normal data was truncated.
     // MSG_CTRUNC
 
-    return bytesRead;
+	return bytesRead;
+
+	#endif
+
+	var iov = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_iov, POINTER_TYPE) }}};
+	var iovcnt = {{{ makeGetValue('message', C_STRUCTS.msghdr.msg_iovlen, 'i32') }}};
+
+	let len = 0;
+
+	if (iov && (iovcnt > 0)) {
+	    
+	    let iov2 = iov;
+
+	    for (var i = 0; i < iovcnt; i++) {
+		len += {{{ makeGetValue('iov2', C_STRUCTS.iovec.iov_len, '*') }}};
+		iov2 += {{{ C_STRUCTS.iovec.__size__ }}};
+	    }
+	}
+
+	console.log("syscall_recvmsg: cnt:"+iovcnt+", len="+len);
+
+	let ret = Asyncify.handleSleep(function (wakeUp) {
+
+	    if (Module['fd_table'][fd].family == 1) {
+
+		// TODO
+		
+		/*var sock = getSocketFromFD(fd);
+
+		sock.wakeUp = wakeUp;
+
+		sock.sock_ops.recvfrom(sock, buf, len, flags, addr, addrlen);*/
+	    }
+	    else {
+
+		let buf_size = 28;
+
+		let buf2 = new Uint8Array(buf_size);
+
+		buf2[0] = 54; // RECVFROM
+
+		let pid = Module.getpid();
+		
+		// pid
+		buf2[4] = pid & 0xff;
+		buf2[5] = (pid >> 8) & 0xff;
+		buf2[6] = (pid >> 16) & 0xff;
+		buf2[7] = (pid >> 24) & 0xff;
+		
+		let remote_fd = Module['fd_table'][fd].remote_fd;
+
+		// remote_fd
+		buf2[12] = remote_fd & 0xff;
+		buf2[13] = (remote_fd >> 8) & 0xff;
+		buf2[14] = (remote_fd >> 16) & 0xff;
+		buf2[15] = (remote_fd >> 24) & 0xff;
+
+		// flags
+		buf2[16] = flags & 0xff;
+		buf2[17] = (flags >> 8) & 0xff;
+		buf2[18] = (flags >> 16) & 0xff;
+		buf2[19] = (flags >> 24) & 0xff;
+
+		// len
+		buf2[20] = len & 0xff;
+		buf2[21] = (len >> 8) & 0xff;
+		buf2[22] = (len >> 16) & 0xff;
+		buf2[23] = (len >> 24) & 0xff;
+
+		let addrlen = 40;
+
+		// addr_len
+		buf2[24] = addrlen & 0xff;
+		buf2[25] = (addrlen >> 8) & 0xff;
+		buf2[26] = (addrlen >> 16) & 0xff;
+		buf2[27] = (addrlen >> 24) & 0xff;
+
+		const hid = Module['rcv_bc_channel'].set_handler( (messageEvent) => {
+		    let msg2 = messageEvent.data;
+
+		    if (msg2.buf[0] == (54|0x80)) {
+
+			let _errno = msg2.buf[8] | (msg2.buf[9] << 8) | (msg2.buf[10] << 16) |  (msg2.buf[11] << 24);
+
+			if (!_errno) {
+			    
+			    let bytes_read = msg2.buf[20] | (msg2.buf[21] << 8) | (msg2.buf[22] << 16) |  (msg2.buf[23] << 24);
+
+			    let offset = 0;
+			    
+			    for (let i = 0; i < iovcnt; i++) {
+
+				let len =  Module.HEAPU8[iov+8*i+4] | (Module.HEAPU8[iov+8*i+5] << 8) | (Module.HEAPU8[iov+8*i+6] << 16) |  (Module.HEAPU8[iov+8*i+7] << 24);
+
+				//console.log("__syscall_readv: "+i+", len="+len);
+				
+				let len2 = ((offset+len) <= bytes_read)?len:bytes_read-offset;
+
+				//console.log("__syscall_readv: "+i+", len2="+len2);
+
+				if (len2 > 0) {
+				    let ptr =  Module.HEAPU8[iov+8*i] | (Module.HEAPU8[iov+8*i+1] << 8) | (Module.HEAPU8[iov+8*i+2] << 16) |  (Module.HEAPU8[iov+8*i+3] << 24);
+
+				    Module.HEAPU8.set(msg2.buf.slice(68+offset, 68+offset+len2), ptr);
+				}
+				else {
+
+				    break;
+				}
+
+				offset += len2;
+
+				if (offset >= bytes_read)
+				    break;
+			    }
+			    
+			    wakeUp(bytes_read);
+			}
+			else {
+			    
+			    wakeUp(-_errno);
+			}
+			
+			return hid;
+		    }
+
+		    return -1;
+		});
+
+		let msg = {
+		    
+		    from: Module['rcv_bc_channel'].name,
+		    buf: buf2,
+		    len: buf_size
+		};
+
+		let driver_bc = Module.get_broadcast_channel(Module['fd_table'][fd].peer);
+		
+		driver_bc.postMessage(msg);
+	    }
+	});
+	
+	return ret;
   },
 #endif // ~PROXY_POSIX_SOCKETS==0
   __syscall_fchdir: function(fd) {
